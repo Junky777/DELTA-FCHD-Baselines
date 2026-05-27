@@ -4,29 +4,29 @@ import random
 from pathlib import Path
 from sklearn.model_selection import train_test_split
 
-# ================= 配置区 =================
-# 原始数据集路径 (按病种分类的文件夹结构)
+# ================= Configuration =================
+# Source dataset path organized by disease category
 SOURCE_DIR = Path("Final_Clean_Dataset/Videos")
-# 划分后存放的新路径
+# Output path for the split dataset
 OUTPUT_DIR = Path("DELTA_Dataset_Splits")
 
-# 比例设置
+# Split ratio settings
 TEST_SIZE = 0.20
-VAL_SIZE_OF_REMAINING = 0.125 # 剩下的 80% 中取 12.5% 就是整体的 10%
+VAL_SIZE_OF_REMAINING = 0.125  # 12.5% of the remaining 80% corresponds to 10% of the full dataset
 
 random_seed = 42
 # ==========================================
 
 def get_dataset_info(source_dir):
-    """获取所有患者目录及其对应的病种标签"""
+    """Get all patient directories and their disease labels."""
     data = []
-    # 遍历源目录下的所有病种文件夹
+    # Iterate over disease folders in the source directory
     for class_folder in sorted(source_dir.iterdir()):
         if class_folder.is_dir():
             class_name = class_folder.name
-            # 遍历病种文件夹下的所有患者文件夹/视频文件
+            # Iterate over patient folders or video files under each disease folder
             for patient_item in class_folder.iterdir():
-                if patient_item.name.startswith('.'): continue # 忽略隐藏文件
+                if patient_item.name.startswith('.'): continue  # Ignore hidden files
                 data.append({
                     'patient_path': patient_item,
                     'class_name': class_name,
@@ -37,14 +37,14 @@ def get_dataset_info(source_dir):
 def main():
     data = get_dataset_info(SOURCE_DIR)
     
-    # 提取特征 (路径) 和 标签 (病种)
+    # Extract features (paths) and labels (disease categories)
     X = [item['patient_path'] for item in data]
     y = [item['class_name'] for item in data]
     
-    print(f"检测到总数据量: {len(X)} 例")
+    print(f"Total cases detected: {len(X)}")
     
-    # 第一次划分：分离出 测试集 Test (20%)
-    # stratify=y 保证按病种比例划分
+    # First split: hold out Test set (20%)
+    # stratify=y preserves disease-category proportions
     X_temp, X_test, y_temp, y_test = train_test_split(
         X, y, 
         test_size=TEST_SIZE, 
@@ -52,7 +52,7 @@ def main():
         stratify=y
     )
     
-    # 第二次划分：从剩下的 80% 中分离出 训练集 Train (70%) 和 验证集 Val (10%)
+    # Second split: divide the remaining 80% into Train (70%) and Val (10%)
     X_train, X_val, y_train, y_val = train_test_split(
         X_temp, y_temp, 
         test_size=VAL_SIZE_OF_REMAINING, 
@@ -60,14 +60,14 @@ def main():
         stratify=y_temp
     )
     
-    # 创建输出目录结构
+    # Create output directory structure
     splits = {
         'Train': X_train,
         'Val': X_val,
         'Test': X_test
     }
     
-    print("\n开始拷贝数据至目标文件夹 (以患者为单位隔离)...")
+    print("\nCopying data to the target folders with patient-level separation...")
     for split_name, patient_paths in splits.items():
         split_dir = OUTPUT_DIR / split_name
         split_dir.mkdir(parents=True, exist_ok=True)
@@ -79,17 +79,17 @@ def main():
             
             target_path = target_class_dir / p_path.name
             
-            # 如果患者数据是文件夹，连同里面所有文件（视频+关键帧）一起拷贝
+            # If patient data is a folder, copy all contained files together
             if p_path.is_dir():
                 shutil.copytree(p_path, target_path, dirs_exist_ok=True)
-            # 如果患者数据是单个文件（如单一视频）
+            # If patient data is a single file, such as one video
             elif p_path.is_file():
                 shutil.copy2(p_path, target_path)
                 
-    print(f"\n划分完成！")
-    print(f"Train (训练集): {len(X_train)} 例")
-    print(f"Val   (验证集): {len(X_val)} 例")
-    print(f"Test  (测试集): {len(X_test)} 例")
+    print(f"\nDataset split completed.")
+    print(f"Train: {len(X_train)} cases")
+    print(f"Val: {len(X_val)} cases")
+    print(f"Test: {len(X_test)} cases")
 
 if __name__ == "__main__":
     main()

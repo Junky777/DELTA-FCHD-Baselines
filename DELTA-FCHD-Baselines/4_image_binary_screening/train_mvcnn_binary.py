@@ -12,7 +12,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
 
-# ================= 1. 配置区 =================
+# ================= 1. Configuration =================
 DATASET_ROOT = Path("DELTA_Dataset_Splits")
 BATCH_SIZE = 16
 EPOCHS = 50
@@ -21,12 +21,12 @@ PATIENCE = 15
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 CLASS_NAMES = [
-    "00_Normal", "01_TOF", "02_DORV", "03_PTA", "04_TGA", 
+    "00_Normal", "01_TOF", "02_DORV", "03_SGA", "04_TGA", 
     "05_AVSD", "06_SV", "07_HLHS", "08_HRHS", "09_AA", 
     "10_PS", "11_PLSVC", "12_RAA"
 ]
 
-# ================= 2. 二分类数据集加载器 =================
+# ================= 2. Binary-classification dataset loader =================
 class FetalBinaryDataset(Dataset):
     def __init__(self, root_dir, split="Train", transform=None):
         self.transform = transform
@@ -37,7 +37,7 @@ class FetalBinaryDataset(Dataset):
             class_dir = split_dir / class_name
             if not class_dir.exists(): continue
             
-            # 正常为 0，异常为 1
+            # Normal is 0 and abnormal is 1
             label_id = 0 if class_name == "00_Normal" else 1
             
             for patient_folder in class_dir.iterdir():
@@ -63,39 +63,39 @@ class FetalBinaryDataset(Dataset):
         
         return torch.stack(view_images), label
 
-# ================= 3. 经典 MVCNN 架构 (Su et al., ICCV 2015) =================
+# ================= 3. Classic MVCNN architecture (Su et al., ICCV 2015) =================
 class ClassicMVCNN(nn.Module):
     def __init__(self, num_classes=2):
         super(ClassicMVCNN, self).__init__()
-        # 使用共享权重的 ResNet-50 作为特征提取主干
+        # Use shared-weight ResNet-50 as feature-extraction backbone
         base_model = models.resnet50(weights=models.ResNet50_Weights.IMAGENET1K_V1)
         self.feature_dim = base_model.fc.in_features # 2048
         
-        # 移除全连接层，只保留特征提取部分
+        # Remove the fully connected layer and keep only the feature extractor
         self.features = nn.Sequential(*(list(base_model.children())[:-1]))
         
-        # 标准分类头 (直接作用于池化后的特征)
+        # Standard classification head applied to pooled features
         self.classifier = nn.Linear(self.feature_dim, num_classes)
 
     def forward(self, x):
-        # x 维度: (Batch, 5, 3, 224, 224)
+        # x shape: (Batch, 5, 3, 224, 224)
         batch_size, num_views, c, h, w = x.shape
         
-        # 将 Batch 和 Views 合并，统一进行特征提取
+        # Merge batch and view dimensions for feature extraction
         x = x.view(batch_size * num_views, c, h, w)
         feats = self.features(x) # (Batch*5, 2048, 1, 1)
         
-        # 恢复视图维度: (Batch, 5, 2048)
+        # Restore the view dimension: (Batch, 5, 2048)
         feats = feats.view(batch_size, num_views, self.feature_dim)
         
-        # 🌟 核心：View-Pooling (视角池化)
-        # 跨 5 个视角取特征最大值，保留最显著的病理信号
+        # Core step: view pooling
+        # Take the maximum feature value across five views
         pooled_feats, _ = torch.max(feats, dim=1) # (Batch, 2048)
         
         out = self.classifier(pooled_feats)
         return out
 
-# ================= 4. 绘图辅助函数 =================
+# ================= 4. Plotting helper function =================
 def plot_results(y_true, y_pred, save_path="binary_confusion_matrix.png"):
     cm = confusion_matrix(y_true, y_pred)
     plt.figure(figsize=(8, 6))
@@ -108,7 +108,7 @@ def plot_results(y_true, y_pred, save_path="binary_confusion_matrix.png"):
     plt.savefig(save_path, dpi=300)
     plt.close()
 
-# ================= 5. 训练与测试主循环 =================
+# ================= 5. Training and testing loop =================
 def main():
     train_transform = transforms.Compose([
         transforms.Resize((224, 224)),
@@ -133,7 +133,7 @@ def main():
 
     model = ClassicMVCNN(num_classes=2).to(DEVICE)
     
-    # 类别权重：正常 vs 异常 约为 4.6 : 1
+    # Class weights: normal vs abnormal is approximately 4.6:1
     weights = torch.tensor([1.0, 4.6]).to(DEVICE)
     criterion = nn.CrossEntropyLoss(weight=weights)
     optimizer = optim.Adam(model.parameters(), lr=LEARNING_RATE)
@@ -143,7 +143,7 @@ def main():
     save_path = "best_mvcnn_classic_binary.pth"
     
     print("\n" + "="*50)
-    print("开始训练正宗 MVCNN (Su et al.) 二分类模型")
+    print("Start training the MVCNN binary-classification model (Su et al.)")
     print("="*50)
     
     for epoch in range(EPOCHS):
@@ -158,7 +158,7 @@ def main():
             optimizer.step()
             running_loss += loss.item() * imgs.size(0)
 
-        # 验证
+        # Validation
         model.eval()
         val_preds, val_labels = [], []
         with torch.no_grad():
@@ -180,11 +180,11 @@ def main():
             epochs_no_improve += 1
             
         if epochs_no_improve >= PATIENCE:
-            print(f"--- 早停触发 ---")
+            print(f"--- Early stopping triggered ---")
             break
 
-    # 最终测试
-    print("\n加载最佳模型进行最终测试...")
+    # Final testing
+    print("\nLoading the best model for final testing...")
     model.load_state_dict(torch.load(save_path))
     model.eval()
     test_preds, test_labels = [], []
@@ -198,10 +198,10 @@ def main():
             
     acc = accuracy_score(test_labels, test_preds)
     p, r, f1, _ = precision_recall_fscore_support(test_labels, test_preds, average='macro', zero_division=0)
-    print(f"\n[测试结果] Accuracy: {acc:.4f} | Macro F1: {f1:.4f}")
+    print(f"\n[Test results] Accuracy: {acc:.4f} | Macro F1: {f1:.4f}")
     
     plot_results(test_labels, test_preds)
-    print("混淆矩阵已保存为 binary_confusion_matrix.png")
+    print("Confusion matrix saved as binary_confusion_matrix.png")
 
 if __name__ == "__main__":
     main()

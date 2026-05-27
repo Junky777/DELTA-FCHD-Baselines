@@ -12,22 +12,22 @@ import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
 
-# ================= 1. 配置区 =================
+# ================= 1. Configuration =================
 DATASET_ROOT = Path("DELTA_Dataset_Splits")
-BATCH_SIZE = 16  # 视频极占显存，如 OOM 请降至 4
+BATCH_SIZE = 16  # Video models are memory intensive; reduce to 4 if OOM occurs
 EPOCHS = 100
-LEARNING_RATE = 5e-5 # 视频预训练模型建议使用更小的学习率微调
+LEARNING_RATE = 5e-5  # Use a smaller learning rate for fine-tuning pretrained video models
 PATIENCE = 30
-NUM_FRAMES = 32 # 从每个视频中均匀提取的帧数
+NUM_FRAMES = 32  # Number of frames uniformly sampled from each video
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 CLASS_NAMES = [
-    "00_Normal", "01_TOF", "02_DORV", "03_PTA", "04_TGA", 
+    "00_Normal", "01_TOF", "02_DORV", "03_SGA", "04_TGA", 
     "05_AVSD", "06_SV", "07_HLHS", "08_HRHS", "09_AA", 
     "10_PS", "11_PLSVC", "12_RAA"
 ]
 
-# ================= 2. 视频数据集加载器 =================
+# ================= 2. Video dataset loader =================
 class FetalVideoBinaryDataset(Dataset):
     def __init__(self, root_dir, split="Train", num_frames=16, transform=None):
         self.transform = transform
@@ -39,12 +39,12 @@ class FetalVideoBinaryDataset(Dataset):
             class_dir = split_dir / class_name
             if not class_dir.exists(): continue
             
-            # 二分类逻辑：正常为 0，异常为 1
+            # Binary-label rule: normal is 0 and abnormal is 1
             label_id = 0 if class_name == "00_Normal" else 1
             
             for patient_folder in class_dir.iterdir():
                 if patient_folder.is_dir():
-                    # 寻找视频文件 (支持多种后缀)
+                    # Search for video files with supported extensions
                     video_files = list(patient_folder.glob("video.*"))
                     if video_files:
                         self.cases.append((video_files[0], label_id))
@@ -57,28 +57,28 @@ class FetalVideoBinaryDataset(Dataset):
         frames = []
         total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
         
-        # 均匀采样索引
+        # Uniformly sampled indices
         if total_frames > 0:
             indices = np.linspace(0, total_frames - 1, self.num_frames, dtype=int)
         else:
-            indices = np.zeros(self.num_frames, dtype=int) # 防御性编程
+            indices = np.zeros(self.num_frames, dtype=int)  # Defensive programming
 
         curr_frame = 0
         while cap.isOpened():
             ret, frame = cap.read()
             if not ret: break
             if curr_frame in indices:
-                # BGR 转 RGB
+                # Convert BGR to RGB
                 frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
                 frames.append(frame)
             curr_frame += 1
         cap.release()
 
-        # 填补由于视频损坏或过短导致帧数不够的情况
+        # Pad frames if the video is corrupted or too short
         while len(frames) < self.num_frames:
             frames.append(frames[-1] if len(frames) > 0 else np.zeros((224, 224, 3), dtype=np.uint8))
         
-        # 截断多余的帧
+        # Truncate extra frames
         frames = frames[:self.num_frames]
         return frames
 
@@ -89,27 +89,27 @@ class FetalVideoBinaryDataset(Dataset):
         processed_frames = []
         for frame in frames:
             if self.transform:
-                frame = self.transform(frame) # 返回 (C, H, W)
+                frame = self.transform(frame)  # Return (C, H, W)
             processed_frames.append(frame)
         
-        # 堆叠所有帧: (T, C, H, W) -> R(2+1)D 要求输入格式为 (C, T, H, W)
+        # Stack all frames: (T, C, H, W) -> R(2+1)D expects (C, T, H, W)
         video_tensor = torch.stack(processed_frames) 
         video_tensor = video_tensor.permute(1, 0, 2, 3) 
         
         return video_tensor, label
 
-# ================= 3. R(2+1)D 权威视频分类架构 =================
+# ================= 3. R(2+1)D video classification architecture =================
 def build_r2plus1d(num_classes=2):
-    # 加载 Kinetics-400 数据集上的预训练权重
+    # Load pretrained weights from Kinetics-400
     weights = video_models.R2Plus1D_18_Weights.KINETICS400_V1
     model = video_models.r2plus1d_18(weights=weights)
     
-    # 替换最后的全连接层以适应我们的二分类任务
+    # Replace the final fully connected layer for binary classification
     in_features = model.fc.in_features
     model.fc = nn.Linear(in_features, num_classes)
     return model
 
-# ================= 4. 绘图辅助函数 =================
+# ================= 4. Plotting helper function =================
 def plot_results(y_true, y_pred, save_path="video_binary_confusion_matrix.png"):
     cm = confusion_matrix(y_true, y_pred)
     plt.figure(figsize=(8, 6))
@@ -122,18 +122,18 @@ def plot_results(y_true, y_pred, save_path="video_binary_confusion_matrix.png"):
     plt.savefig(save_path, dpi=300)
     plt.close()
 
-# ================= 5. 训练与评估主循环 =================
+# ================= 5. Training and evaluation loop =================
 def main():
-    # 注意：R(2+1)D 的标准输入大小通常是 112x112，但预训练模型能适应 224x224
+    # Note: the standard R(2+1)D input size is usually 112x112, but the pretrained model can handle 224x224
     transform = transforms.Compose([
         transforms.ToPILImage(),
-        transforms.Resize((112, 112)), # 使用 112x112 可以大幅节约显存并加快训练
+        transforms.Resize((112, 112)),  # Using 112x112 reduces memory use and speeds up training
         transforms.ToTensor(),
         transforms.Normalize(mean=[0.43216, 0.394666, 0.37645], 
-                             std=[0.22803, 0.22145, 0.216989]) # Kinetics400 标准均值方差
+                             std=[0.22803, 0.22145, 0.216989])  # Kinetics-400 normalization statistics
     ])
 
-    print("正在从视频文件中提取时空序列，这可能需要一些时间...")
+    print("Extracting spatio-temporal sequences from video files; this may take some time...")
     train_ds = FetalVideoBinaryDataset(DATASET_ROOT, "Train", NUM_FRAMES, transform)
     val_ds = FetalVideoBinaryDataset(DATASET_ROOT, "Val", NUM_FRAMES, transform)
     test_ds = FetalVideoBinaryDataset(DATASET_ROOT, "Test", NUM_FRAMES, transform)
@@ -152,7 +152,7 @@ def main():
     save_path = "best_r2plus1d_binary.pth"
     
     print("\n" + "="*50)
-    print("开始训练权威视频模型 R(2+1)D (Tran et al.)")
+    print("Start training R(2+1)D video model (Tran et al.)")
     print("="*50)
     
     for epoch in range(EPOCHS):
@@ -167,7 +167,7 @@ def main():
             optimizer.step()
             running_loss += loss.item() * videos.size(0)
 
-        # 验证集评估
+        # Validation-set evaluation
         model.eval()
         val_preds, val_labels = [], []
         with torch.no_grad():
@@ -189,10 +189,10 @@ def main():
             epochs_no_improve += 1
             
         if epochs_no_improve >= PATIENCE:
-            print(f"--- 早停触发 ---")
+            print(f"--- Early stopping triggered ---")
             break
 
-    print("\n加载 R(2+1)D 最佳模型进行最终测试...")
+    print("\nLoading the best R(2+1)D model for final testing...")
     model.load_state_dict(torch.load(save_path))
     model.eval()
     test_preds, test_labels = [], []
@@ -206,10 +206,10 @@ def main():
             
     acc = accuracy_score(test_labels, test_preds)
     p, r, f1, _ = precision_recall_fscore_support(test_labels, test_preds, average='macro', zero_division=0)
-    print(f"\n[R(2+1)D 视频测试结果] Accuracy: {acc:.4f} | Macro F1: {f1:.4f}")
+    print(f"\n[R(2+1)D video test results] Accuracy: {acc:.4f} | Macro F1: {f1:.4f}")
     
     plot_results(test_labels, test_preds)
-    print("混淆矩阵已保存为 video_binary_confusion_matrix.png")
+    print("Confusion matrix saved as video_binary_confusion_matrix.png")
 
 if __name__ == "__main__":
     main()

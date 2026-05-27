@@ -12,7 +12,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
 
-# ================= 1. 配置区 =================
+# ================= 1. Configuration =================
 DATASET_ROOT = Path("DELTA_Dataset_Splits")
 BATCH_SIZE = 16
 EPOCHS = 50
@@ -21,12 +21,12 @@ PATIENCE = 15
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 CLASS_NAMES = [
-    "00_Normal", "01_TOF", "02_DORV", "03_PTA", "04_TGA", 
+    "00_Normal", "01_TOF", "02_DORV", "03_SGA", "04_TGA", 
     "05_AVSD", "06_SV", "07_HLHS", "08_HRHS", "09_AA", 
     "10_PS", "11_PLSVC", "12_RAA"
 ]
 
-# ================= 2. 二分类数据集加载器 =================
+# ================= 2. Binary-classification dataset loader =================
 class FetalBinaryDataset(Dataset):
     def __init__(self, root_dir, split="Train", transform=None):
         self.transform = transform
@@ -57,52 +57,52 @@ class FetalBinaryDataset(Dataset):
             view_images.append(img)
         return torch.stack(view_images), label
 
-# ================= 3. 权威公用模型：Attention-based MIL (Ilse et al., ICML 2018) =================
+# ================= 3. Reference model: Attention-based MIL (Ilse et al., ICML 2018) =================
 class AttentionMIL(nn.Module):
     def __init__(self, num_classes=2):
         super(AttentionMIL, self).__init__()
-        # 1. 实例级特征提取器 (Instance Feature Extractor)
+        # 1. Instance-level feature extractor
         base_model = models.resnet50(weights=models.ResNet50_Weights.IMAGENET1K_V1)
         self.feature_dim = base_model.fc.in_features # 2048
         self.features = nn.Sequential(*(list(base_model.children())[:-1]))
         
-        # 2. MIL 注意力模块 (Attention Mechanism as defined in Ilse et al.)
+        # 2. MIL attention module as defined in Ilse et al.
         self.attention_V = nn.Linear(self.feature_dim, 256)
         self.attention_w = nn.Linear(256, 1)
         
-        # 3. 包级分类器 (Bag-level Classifier)
+        # 3. Bag-level classifier
         self.classifier = nn.Linear(self.feature_dim, num_classes)
 
     def forward(self, x):
         # x: (Batch, 5, 3, 224, 224)
         batch_size, num_instances, c, h, w = x.shape
         
-        # 提取每个切面(实例)的特征
+        # Extract features for each plane (instance)
         x = x.view(batch_size * num_instances, c, h, w)
         H = self.features(x) # (Batch*5, 2048, 1, 1)
         H = H.view(batch_size, num_instances, self.feature_dim) # (Batch, 5, 2048)
         
-        # 🌟 MIL 核心：计算每个实例的注意力权重 (Attention Score)
-        # 论文公式: a_k = w^T * tanh(V * h_k)
+        # MIL core: compute attention weights for each instance
+        # Formula from the paper: a_k = w^T * tanh(V * h_k)
         A = self.attention_V(H)      # (Batch, 5, 256)
         A = torch.tanh(A)            # (Batch, 5, 256)
         A = self.attention_w(A)      # (Batch, 5, 1)
         
-        # 跨实例(切面)进行 Softmax 归一化
+        # Apply softmax normalization across instances (planes)
         A = F.softmax(A, dim=1)      # (Batch, 5, 1)
         
-        # 根据注意力权重对 5 个特征进行加权聚合 (Attention Pooling)
-        # 公式: z = \sum_{k=1}^{K} a_k * h_k
+        # Aggregate the five features using attention weights
+        # Formula: z = \sum_{k=1}^{K} a_k * h_k
         Z = torch.sum(H * A, dim=1)  # (Batch, 2048)
         
-        # 最后送入分类器
+        # Pass the aggregated feature to the classifier
         out = self.classifier(Z)
         
-        # 注意：这里我们不仅返回了分类结果 out，还返回了注意力权重 A
-        # 在做模型可解释性分析(热力图)时，A 的数值非常关键！
+        # Return both classification logits and attention weights
+        # Attention weights can be used for interpretability analysis
         return out, A
 
-# ================= 4. 绘图辅助函数 =================
+# ================= 4. Plotting helper function =================
 def plot_results(y_true, y_pred, save_path="binary_confusion_matrix_mil.png"):
     cm = confusion_matrix(y_true, y_pred)
     plt.figure(figsize=(8, 6))
@@ -115,7 +115,7 @@ def plot_results(y_true, y_pred, save_path="binary_confusion_matrix_mil.png"):
     plt.savefig(save_path, dpi=300)
     plt.close()
 
-# ================= 5. 训练与测试主循环 =================
+# ================= 5. Training and testing loop =================
 def main():
     train_transform = transforms.Compose([
         transforms.Resize((224, 224)),
@@ -148,7 +148,7 @@ def main():
     save_path = "best_ab_mil_binary.pth"
     
     print("\n" + "="*50)
-    print("开始训练权威 AB-MIL (Ilse et al.) 二分类模型")
+    print("Start training the AB-MIL binary-classification model (Ilse et al.)")
     print("="*50)
     
     for epoch in range(EPOCHS):
@@ -157,7 +157,7 @@ def main():
         for imgs, labels in train_loader:
             imgs, labels = imgs.to(DEVICE), labels.to(DEVICE)
             optimizer.zero_grad()
-            # 注意：MIL 模型返回两个值 (logits, attention_weights)
+            # The MIL model returns two values: logits and attention_weights
             outputs, _ = model(imgs) 
             loss = criterion(outputs, labels)
             loss.backward()
@@ -185,10 +185,10 @@ def main():
             epochs_no_improve += 1
             
         if epochs_no_improve >= PATIENCE:
-            print(f"--- 早停触发 ---")
+            print(f"--- Early stopping triggered ---")
             break
 
-    print("\n加载最佳 MIL 模型进行最终测试...")
+    print("\nLoading the best MIL model for final testing...")
     model.load_state_dict(torch.load(save_path))
     model.eval()
     test_preds, test_labels = [], []
@@ -202,10 +202,10 @@ def main():
             
     acc = accuracy_score(test_labels, test_preds)
     p, r, f1, _ = precision_recall_fscore_support(test_labels, test_preds, average='macro', zero_division=0)
-    print(f"\n[AB-MIL 测试结果] Accuracy: {acc:.4f} | Macro F1: {f1:.4f}")
+    print(f"\n[AB-MIL test results] Accuracy: {acc:.4f} | Macro F1: {f1:.4f}")
     
     plot_results(test_labels, test_preds)
-    print("混淆矩阵已保存为 binary_confusion_matrix_mil.png")
+    print("Confusion matrix saved as binary_confusion_matrix_mil.png")
 
 if __name__ == "__main__":
     main()

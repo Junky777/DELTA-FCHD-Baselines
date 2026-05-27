@@ -2,66 +2,66 @@ import os
 import cv2
 import json
 
-# ================= 配置区 =================
-# 输入：尚未脱敏的原数据集路径
+# ================= Configuration =================
+# Input: raw dataset path before de-identification
 DIR_INPUT = r"F:\BaiduNetdiskDownload\Deidentified_Dataset"
-# 输出：完美裁剪后的数据集路径
+# Output: cropped dataset path
 DIR_OUTPUT = r"F:\BaiduNetdiskDownload\Cropped_Dataset"
 
 VALID_IMG_EXTS = {'.jpg', '.jpeg', '.png'}
 VALID_VID_EXTS = {'.mp4', '.avi', '.mov'}
 EXPECTED_IMG_NAMES = {'1', '2', '3', '4', '5'}
 
-# 用于保存您画过的框的坐标缓存文件，避免下次运行重复画框
+# Cache file for storing previously selected ROI boxes
 ROI_CACHE_FILE = "roi_memory.json"
 # ==========================================
 
-# 内存中的 ROI 字典: {(width, height): (x, y, w, h)}
+# In-memory ROI dictionary: {(width, height): (x, y, w, h)}
 roi_memory = {}
 
 def load_roi_memory():
-    """加载已保存的模板坐标"""
+    """Load saved ROI template coordinates."""
     global roi_memory
     if os.path.exists(ROI_CACHE_FILE):
         with open(ROI_CACHE_FILE, 'r') as f:
-            # json 的 key 只能是字符串，所以存的时候把 (w, h) 转成了 "w_h"
+            # JSON keys must be strings, so (w, h) is stored as "w_h".
             data = json.load(f)
             for k, v in data.items():
                 w, h = map(int, k.split('_'))
                 roi_memory[(w, h)] = tuple(v)
 
 def save_roi_memory():
-    """保存模板坐标到本地"""
+    """Save ROI template coordinates locally."""
     data = {f"{k[0]}_{k[1]}": v for k, v in roi_memory.items()}
     with open(ROI_CACHE_FILE, 'w') as f:
         json.dump(data, f)
 
 def get_roi_for_resolution(frame):
-    """根据图像分辨率，获取或要求用户绘制裁剪框"""
+    """Get or request an ROI crop box according to image resolution."""
     h, w = frame.shape[:2]
     res_key = (w, h)
     
     if res_key in roi_memory:
         return roi_memory[res_key]
         
-    # 如果遇到新分辨率，弹出窗口让用户画框
-    print(f"\n[新设备提醒] 遇到新的画面尺寸: {w}x{h}")
-    print("👉 请用鼠标拖拽一个框，框住纯净的超声区域（避开四周文字）。")
-    print("👉 画完后按下【回车键】或【空格键】确认。按【C】键重画。")
+    # If a new resolution is encountered, open a window for ROI selection
+    print(f"\n[New resolution] New frame size detected: {w}x{h}")
+    print("Drag the mouse to select the clean ultrasound region, avoiding surrounding text.")
+    print("Press Enter or Space to confirm. Press C to redraw.")
     
-    # 弹出交互窗口
+    # Open interactive window
     window_name = f"Select ROI for {w}x{h} (Press ENTER to confirm)"
     roi = cv2.selectROI(window_name, frame, showCrosshair=True, fromCenter=False)
     cv2.destroyWindow(window_name)
     
     # roi = (x, y, width, height)
     if roi[2] == 0 or roi[3] == 0:
-        print("⚠️ 警告：您画的框无效，将跳过裁剪！")
+        print("Warning: invalid ROI box; cropping will be skipped.")
         return None
         
     roi_memory[res_key] = roi
     save_roi_memory()
-    print(f"✅ 尺寸 {w}x{h} 的模板已记录: 坐标 {roi}")
+    print(f"Resolution {w}x{h} template recorded: coordinates {roi}")
     return roi
 
 def process_image(src_path, dst_path):
@@ -75,7 +75,7 @@ def process_image(src_path, dst_path):
         cropped_img = img[y:y+h, x:x+w]
         cv2.imwrite(dst_path, cropped_img)
     else:
-        # 如果获取不到ROI，原样复制
+        # If no ROI is available, copy the file unchanged
         cv2.imwrite(dst_path, img)
     return True
 
@@ -100,13 +100,13 @@ def process_video(src_path, dst_path):
         fps = 30.0
         
     fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-    # 注意：输出视频的尺寸必须是裁剪框的尺寸
+    # Note: output video size must match the crop box size
     out = cv2.VideoWriter(dst_path, fourcc, fps, (roi_w, roi_h))
     
-    # 写入第一帧
+    # Write the first frame
     out.write(first_frame[y:y+roi_h, x:x+roi_w])
     
-    # 极速裁剪后续帧
+    # Crop subsequent frames
     while True:
         ret, frame = cap.read()
         if not ret:
@@ -123,7 +123,7 @@ def main():
         os.makedirs(DIR_OUTPUT)
 
     print("="*50)
-    print(" 开始极速交互式裁剪脱敏...")
+    print("Starting interactive ROI cropping for de-identification...")
     print("="*50)
     
     total_patients = 0
@@ -140,7 +140,7 @@ def main():
             os.makedirs(out_patient_dir)
             
         total_patients += 1
-        print(f"[{total_patients}] 处理中: {patient_folder_name}")
+        print(f"[{total_patients}] Processing: {patient_folder_name}")
         
         for file in files:
             name, ext = os.path.splitext(file)
@@ -156,7 +156,7 @@ def main():
                 process_video(src_file_path, dst_file_path)
 
     print("\n" + "="*50)
-    print(" 裁剪脱敏全部完成！100% 绝对安全！")
+    print("Cropping-based de-identification completed.")
     print("="*50)
 
 if __name__ == "__main__":

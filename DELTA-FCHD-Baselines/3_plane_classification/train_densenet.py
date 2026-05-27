@@ -9,15 +9,15 @@ from pathlib import Path
 from sklearn.metrics import accuracy_score, precision_recall_fscore_support
 import numpy as np
 
-# ================= 1. 配置区 =================
+# ================= 1. Configuration =================
 DATASET_ROOT = Path("DELTA_Dataset_Splits")
 BATCH_SIZE = 32
-EPOCHS = 100             # 保持 100 轮
+EPOCHS = 100             # Keep 100 epochs
 LEARNING_RATE = 1e-4
-PATIENCE = 20            # 保持早停容忍度 20 轮
+PATIENCE = 20            # Keep early-stopping patience at 20 epochs
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-# 定义切面类别及其对应的标签ID
+# Define plane categories and their label IDs
 PLANE_CLASSES = {
     "Abdomen": 0,
     "4CH": 1,
@@ -27,7 +27,7 @@ PLANE_CLASSES = {
 }
 NUM_CLASSES = len(PLANE_CLASSES)
 
-# ================= 2. 自定义数据集加载器 =================
+# ================= 2. Custom dataset loader =================
 class FetalPlaneDataset(Dataset):
     def __init__(self, root_dir, split="Train", transform=None):
         self.transform = transform
@@ -60,7 +60,7 @@ class FetalPlaneDataset(Dataset):
             
         return image, label
 
-# ================= 3. 数据预处理管道 =================
+# ================= 3. Data preprocessing pipeline =================
 train_transforms = transforms.Compose([
     transforms.Resize((224, 224)),
     transforms.RandomHorizontalFlip(),
@@ -75,17 +75,17 @@ eval_transforms = transforms.Compose([
     transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
 ])
 
-# ================= 4. 模型构建 (DenseNet-121) =================
+# ================= 4. Model construction (DenseNet-121) =================
 def build_densenet121(num_classes):
-    # 加载预训练的 DenseNet-121
+    # Load pretrained DenseNet-121
     model = models.densenet121(weights=models.DenseNet121_Weights.IMAGENET1K_V1)
     
-    # DenseNet 的分类头叫做 classifier，而不是 fc
+    # DenseNet uses classifier as the classification head instead of fc
     num_ftrs = model.classifier.in_features
     model.classifier = nn.Linear(num_ftrs, num_classes)
     return model
 
-# ================= 5. 评估函数 =================
+# ================= 5. Evaluation function =================
 def evaluate_model(model, dataloader, criterion):
     model.eval()
     running_loss = 0.0
@@ -112,9 +112,9 @@ def evaluate_model(model, dataloader, criterion):
     
     return epoch_loss, acc, precision, recall, f1
 
-# ================= 6. 主训练循环 =================
+# ================= 6. Main training loop =================
 def main():
-    print("正在加载数据集 (DenseNet-121)...")
+    print("Loading dataset (DenseNet-121)...")
     train_dataset = FetalPlaneDataset(DATASET_ROOT, split="Train", transform=train_transforms)
     val_dataset = FetalPlaneDataset(DATASET_ROOT, split="Val", transform=eval_transforms)
     test_dataset = FetalPlaneDataset(DATASET_ROOT, split="Test", transform=eval_transforms)
@@ -131,7 +131,7 @@ def main():
     epochs_no_improve = 0
     save_path = "best_densenet121_plane_cls.pth"
     
-    print("\n--- 开始训练 DenseNet-121 ---")
+    print("\n--- Start training DenseNet-121 ---")
     for epoch in range(EPOCHS):
         model.train()
         running_loss = 0.0
@@ -157,21 +157,21 @@ def main():
         if val_f1 > best_val_f1:
             best_val_f1 = val_f1
             torch.save(model.state_dict(), save_path)
-            print("  --> 发现最佳模型，已保存！")
+            print("  --> New best model found and saved.")
             epochs_no_improve = 0
         else:
             epochs_no_improve += 1
-            print(f"  --> 早停计数: {epochs_no_improve}/{PATIENCE}")
+            print(f"  --> Early-stopping counter: {epochs_no_improve}/{PATIENCE}")
             
         if epochs_no_improve >= PATIENCE:
-            print(f"\n!!! 触发早停机制 (连续 {PATIENCE} 轮 F1 无提升)，提前停止训练 !!!")
+            print(f"\n!!! Early stopping triggered: no F1 improvement for {PATIENCE} consecutive epochs. Stopping training early. !!!")
             break
 
-    print("\n--- 在测试集上进行最终验证 ---")
+    print("\n--- Final evaluation on the test set ---")
     model.load_state_dict(torch.load(save_path))
     test_loss, test_acc, test_pre, test_rec, test_f1 = evaluate_model(model, test_loader, criterion)
     
-    print("最终 Test 性能报告 (DenseNet-121):")
+    print("Final Test performance report (DenseNet-121):")
     print(f"Accuracy : {test_acc:.4f}")
     print(f"Precision: {test_pre:.4f}")
     print(f"Recall   : {test_rec:.4f}")

@@ -5,32 +5,32 @@ import easyocr
 import matplotlib.pyplot as plt
 from matplotlib.widgets import RectangleSelector
 
-# ================= 配置区 =================
-# 【注意】输入：必须是最初的、没有被裁坏过的脱敏原数据集
+# ================= Configuration =================
+# Note: input should be the original de-identified dataset before cropping
 DIR_INPUT = r"F:\BaiduNetdiskDownload\Deidentified_Dataset"
-# 输出：最终双重脱敏的完美数据集路径
+# Output: final dataset path after two-stage de-identification
 DIR_OUTPUT = r"F:\BaiduNetdiskDownload\Final_Clean_Dataset"
 
-# 之前您辛辛苦苦画好框的记忆文件
+# Cache file for previously selected ROI boxes
 ROI_CACHE_FILE = "roi_memory.json"
 
 VALID_IMG_EXTS = {'.jpg', '.jpeg', '.png'}
 VALID_VID_EXTS = {'.mp4', '.avi', '.mov'}
 EXPECTED_IMG_NAMES = {'1', '2', '3', '4', '5'}
 
-# 保守型 OCR 参数
+# Conservative OCR parameters
 CONFIDENCE_THRESHOLD = 0.60
 PADDING = 2
 # ==========================================
 
-print("正在加载保守模式 OCR 模型...")
+print("Loading conservative OCR model...")
 reader = easyocr.Reader(['en', 'ch_sim'], gpu=True)
-print("模型加载完成！\n")
+print("Model loaded.\n")
 
 roi_memory = {}
 
 def load_roi_memory():
-    """加载模板并强制修复奇数尺寸"""
+    """Load ROI templates and force even dimensions."""
     if os.path.exists(ROI_CACHE_FILE):
         with open(ROI_CACHE_FILE, 'r') as f:
             data = json.load(f)
@@ -38,7 +38,7 @@ def load_roi_memory():
                 w, h = map(int, k.split('_'))
                 x, y, roi_w, roi_h = v
                 
-                # 【核心修复】：强制宽和高必须为偶数，防编码器崩溃！
+                # Core fix: force width and height to be even to avoid encoder failures.
                 if roi_w % 2 != 0: roi_w -= 1
                 if roi_h % 2 != 0: roi_h -= 1
                     
@@ -57,12 +57,12 @@ def onselect(eclick, erelease):
     x, y = min(x1, x2), min(y1, y2)
     w, h = abs(x2 - x1), abs(y2 - y1)
     
-    # 手动画框时也强制转换为偶数
+    # Force manually selected ROI dimensions to be even as well
     if w % 2 != 0: w -= 1
     if h % 2 != 0: h -= 1
         
     current_roi = (x, y, w, h)
-    print(f"  --> 已选定区域: {current_roi}。请【关闭图片窗口】继续！")
+    print(f"  --> Selected ROI: {current_roi}. Please close the image window to continue.")
 
 def get_roi_for_resolution(frame):
     global current_roi
@@ -72,7 +72,7 @@ def get_roi_for_resolution(frame):
     if res_key in roi_memory:
         return roi_memory[res_key]
         
-    print(f"\n[新尺寸] {w}x{h}，请在弹出的窗口中框选，然后关闭窗口。")
+    print(f"\n[New resolution] {w}x{h}. Select the ROI in the pop-up window, then close it.")
     current_roi = None
     frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
     fig, ax = plt.subplots(figsize=(10, 8))
@@ -99,7 +99,7 @@ def get_conservative_redaction_boxes(frame):
             br_x = min(w, int(bbox[2][0]) + PADDING)
             br_y = min(h, int(bbox[2][1]) + PADDING)
             boxes.append(((tl_x, tl_y), (br_x, br_y)))
-            print(f"      [残字抹除] '{text}'")
+            print(f"      [Residual text redaction] '{text}'")
     return boxes
 
 def apply_redaction(frame, boxes):
@@ -114,11 +114,11 @@ def process_image(src_path, dst_path):
     roi = get_roi_for_resolution(img)
     if roi:
         x, y, w, h = roi
-        img = img[y:y+h, x:x+w]  # 执行裁剪
+        img = img[y:y+h, x:x+w]  # Apply cropping
         
     boxes = get_conservative_redaction_boxes(img)
     if boxes:
-        img = apply_redaction(img, boxes) # 执行OCR打码
+        img = apply_redaction(img, boxes)  # Apply OCR redaction
         
     cv2.imwrite(dst_path, img)
     return True
@@ -139,12 +139,12 @@ def process_video(src_path, dst_path):
         
     x, y, roi_w, roi_h = roi
     
-    # ================= 帧率修复 =================
+    # ================= Frame-rate correction =================
     fps = cap.get(cv2.CAP_PROP_FPS)
     if fps == 0 or fps != fps or fps > 120 or fps < 1:
         fps = 30.0
     else:
-        fps = float(round(fps)) # 抹平奇葩的小数帧率
+        fps = float(round(fps))  # Round unusual fractional frame rates
         
     fourcc = cv2.VideoWriter_fourcc(*'mp4v')
     out = cv2.VideoWriter(dst_path, fourcc, fps, (roi_w, roi_h))
@@ -177,7 +177,7 @@ def main():
         os.makedirs(DIR_OUTPUT)
 
     print("="*60)
-    print(" 开始终极流水线：裁剪与 OCR 双重清洗同步执行...")
+    print("Starting final pipeline: cropping and OCR redaction...")
     print("="*60)
     
     total_patients = 0
@@ -194,7 +194,7 @@ def main():
             os.makedirs(out_patient_dir)
             
         total_patients += 1
-        print(f"\n[{total_patients}] 处理中: {patient_folder_name}")
+        print(f"\n[{total_patients}] Processing: {patient_folder_name}")
         
         for file in files:
             name, ext = os.path.splitext(file)
@@ -208,7 +208,7 @@ def main():
                 process_video(src_file_path, dst_file_path)
 
     print("\n" + "="*60)
-    print(" 恭喜！终极双重脱敏流水线全部竣工！")
+    print("Two-stage de-identification pipeline completed.")
     print("="*60)
 
 if __name__ == "__main__":

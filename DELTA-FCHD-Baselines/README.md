@@ -1,4 +1,4 @@
-## 📂 Repository Structure & Workflow
+## Repository Structure & Workflow
 
 This repository provides the complete, end-to-end pipeline used in the DELTA dataset paper, from raw data privacy protection to advanced deep learning baselines.
 
